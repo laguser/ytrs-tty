@@ -165,29 +165,30 @@ impl VotManager {
     /// Fetch YouTube native English or translated subtitles via yt-dlp
     fn fetch_youtube_srt(yt_url: &str, video_id: &str, lang: &str) -> Option<PathBuf> {
         let temp_dir = std::env::temp_dir();
-        let out_template = format!("{}/yt_sub_{}_{}.%(ext)s", temp_dir.display(), video_id, lang);
+        let sub_langs = format!("{},en,auto", lang);
+        let out_template = format!("{}/yt_sub_{}_%(lang)s.%(ext)s", temp_dir.display(), video_id);
 
         let _ = Command::new("yt-dlp")
             .arg("--write-sub")
             .arg("--write-auto-sub")
             .arg("--sub-lang")
-            .arg(lang)
-            .arg("--convert-subs")
-            .arg("srt")
+            .arg(&sub_langs)
             .arg("--skip-download")
             .arg("-o")
             .arg(&out_template)
             .arg(yt_url)
             .output();
 
-        let srt_path = temp_dir.join(format!("yt_sub_{}_{}.{}.srt", video_id, lang, lang));
-        if srt_path.exists() {
-            return Some(srt_path);
-        }
-
-        let fallback_srt = temp_dir.join(format!("yt_sub_{}_{}.srt", video_id, lang));
-        if fallback_srt.exists() {
-            return Some(fallback_srt);
+        // Search temp_dir for any matching subtitle file for this video_id
+        if let Ok(entries) = fs::read_dir(&temp_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&format!("yt_sub_{}_", video_id))
+                    && (name.ends_with(".srt") || name.ends_with(".vtt"))
+                {
+                    return Some(entry.path());
+                }
+            }
         }
 
         None

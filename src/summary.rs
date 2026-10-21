@@ -8,27 +8,27 @@ struct SubCue {
 }
 
 impl Summarizer {
-    /// Extracts a cohesive, timeline-distributed TL;DR summary with timestamps from SRT subtitles
+    /// Extracts a cohesive, timeline-distributed TL;DR summary with timestamps from SRT/VTT subtitles
     pub fn summarize(raw_subtitles: &str, max_points: usize) -> Vec<String> {
         let cues = Self::parse_subtitles(raw_subtitles);
         if cues.is_empty() {
-            return vec!["No speech or subtitles found to summarize.".to_string()];
+            return vec!["No speech or dialogue found in this video.".to_string()];
         }
 
         // Clean and filter noise/promotions
         let filtered: Vec<SubCue> = cues
-            .into_iter()
+            .iter()
             .filter(|c| !Self::is_filler(&c.text))
+            .cloned()
             .collect();
 
-        if filtered.is_empty() {
-            return vec!["Not enough meaningful speech text in this video.".to_string()];
-        }
+        // If filtered is too small (e.g. music or brief talk), fallback to original cues
+        let working_cues = if filtered.len() >= 3 { filtered } else { cues };
 
         // Group into complete semantic sentences/thoughts
-        let thoughts = Self::assemble_thoughts(&filtered);
+        let thoughts = Self::assemble_thoughts(&working_cues);
         if thoughts.is_empty() {
-            return vec!["Could not extract key sentences.".to_string()];
+            return vec!["Dialogue is too short to generate a summary.".to_string()];
         }
 
         // Score thoughts based on informative density and keywords
@@ -46,8 +46,9 @@ impl Summarizer {
         // Select top points distributed across video timeline (avoid clustering in one minute)
         let mut selected: Vec<SubCue> = Vec::new();
         for (_, cue) in scored {
-            // Check if we already have a point within 45 seconds of this one
-            let too_close = selected.iter().any(|s| (s.start_sec as i64 - cue.start_sec as i64).abs() < 45);
+            let too_close = selected
+                .iter()
+                .any(|s| (s.start_sec as i64 - cue.start_sec as i64).abs() < 40);
             if !too_close {
                 selected.push(cue);
                 if selected.len() >= max_points {
@@ -93,7 +94,7 @@ impl Summarizer {
                 continue;
             }
 
-            // Timestamp line: 00:01:23,456 --> 00:01:25,789
+            // Timestamp line: 00:01:23,456 --> 00:01:25,789 or 00:01:23.456 --> ...
             if trimmed.contains("-->") {
                 if let Some(start_str) = trimmed.split("-->").next() {
                     current_sec = Self::parse_timestamp_to_sec(start_str.trim());
@@ -101,8 +102,12 @@ impl Summarizer {
                 continue;
             }
 
-            // Skip numeric index lines
-            if trimmed.chars().all(|c| c.is_ascii_digit()) {
+            // Skip headers or numeric index lines
+            if trimmed.starts_with("WEBVTT")
+                || trimmed.starts_with("Kind:")
+                || trimmed.starts_with("Language:")
+                || trimmed.chars().all(|c| c.is_ascii_digit())
+            {
                 continue;
             }
 
@@ -145,15 +150,20 @@ impl Summarizer {
     }
 
     fn clean_line(text: &str) -> String {
-        // Strip XML/HTML tags (like <c.color> or <i>)
+        // Strip XML/HTML tags (<c>), music symbols, and bracket annotations ([Applause])
         let mut out = String::new();
         let mut in_tag = false;
+        let mut in_bracket = false;
         for c in text.chars() {
             if c == '<' {
                 in_tag = true;
             } else if c == '>' {
                 in_tag = false;
-            } else if !in_tag {
+            } else if c == '[' {
+                in_bracket = true;
+            } else if c == ']' {
+                in_bracket = false;
+            } else if !in_tag && !in_bracket && c != '♪' && c != '♫' {
                 out.push(c);
             }
         }
@@ -209,11 +219,13 @@ impl Summarizer {
                 cur_text.push_str(&cue.text);
             }
 
-            // End thought if punctuation found or length reached reasonable statement size
-            let ends_with_punct = cur_text.ends_with('.') || cur_text.ends_with('!') || cur_text.ends_with('?');
-            let is_sufficient_len = cur_text.split_whitespace().count() >= 10 && cur_text.len() >= 60;
+            let ends_with_punct = cur_text.ends_with('.')
+                || cur_text.ends_with('!')
+                || cur_text.ends_with('?');
+            let is_sufficient_len =
+                cur_text.split_whitespace().count() >= 8 && cur_text.len() >= 45;
 
-            if ends_with_punct || (is_sufficient_len && cur_text.len() >= 90) {
+            if ends_with_punct || (is_sufficient_len && cur_text.len() >= 75) {
                 if cur_text.len() <= 240 {
                     thoughts.push(SubCue {
                         start_sec: cur_time,
@@ -224,7 +236,7 @@ impl Summarizer {
             }
         }
 
-        if !cur_text.is_empty() && cur_text.len() >= 40 && cur_text.len() <= 240 {
+        if !cur_text.is_empty() && cur_text.len() >= 25 && cur_text.len() <= 240 {
             thoughts.push(SubCue {
                 start_sec: cur_time,
                 text: cur_text,
@@ -240,20 +252,40 @@ impl Summarizer {
         let words: Vec<&str> = text.split_whitespace().collect();
         let word_count = words.len();
 
-        // Prefer well-formed concise thoughts (10 to 25 words)
-        if (10..=25).contains(&word_count) {
+        if (8..=25).contains(&word_count) {
             score += 10.0;
         }
 
         let lower = text.to_lowercase();
 
-        // Key insight indicators (Russian & English)
         let key_indicators = [
-            "главное", "особенность", "потому что", "проблема", "решение", "результат",
-            "оказалось", "в итоге", "важно", "разница", "работает", "архитектура",
-            "because", "important", "feature", "problem", "solution", "result",
-            "difference", "how it works", "key", "actually", "reason", "benefit",
-            "crucial", "architecture", "explained",
+            "главное",
+            "особенность",
+            "потому что",
+            "проблема",
+            "решение",
+            "результат",
+            "оказалось",
+            "в итоге",
+            "важно",
+            "разница",
+            "работает",
+            "архитектура",
+            "because",
+            "important",
+            "feature",
+            "problem",
+            "solution",
+            "result",
+            "difference",
+            "how it works",
+            "key",
+            "actually",
+            "reason",
+            "benefit",
+            "crucial",
+            "architecture",
+            "explained",
         ];
 
         for ind in &key_indicators {
@@ -262,7 +294,6 @@ impl Summarizer {
             }
         }
 
-        // Unique informative words
         let unique: HashSet<&str> = words.iter().copied().collect();
         score += unique.len() as f32 * 0.5;
 
@@ -274,6 +305,14 @@ impl Summarizer {
         match chars.next() {
             None => String::new(),
             Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    }
+}
+impl Clone for SubCue {
+    fn clone(&self) -> Self {
+        Self {
+            start_sec: self.start_sec,
+            text: self.text.clone(),
         }
     }
 }
