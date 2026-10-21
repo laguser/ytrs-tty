@@ -127,6 +127,8 @@ impl Player {
             .arg("--vo=gpu-next,gpu")
             .arg("--profile=fast")
             .arg("--force-window=immediate")
+            .arg("--demuxer-lavf-analyzeduration=0.5")
+            .arg("--demuxer-lavf-probesize=1048576")
             .arg("--autofit=72%x72%")
             .arg("--geometry=50%:50%")
             .arg("--cursor-autohide=800")
