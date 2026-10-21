@@ -1,92 +1,189 @@
-use std::collections::HashSet;
+use std::fs;
+use std::process::Command;
 
 pub struct Summarizer;
 
-struct SubCue {
-    start_sec: u64,
-    text: String,
-}
-
 impl Summarizer {
-    /// Extracts a cohesive, timeline-distributed TL;DR summary with timestamps from SRT/VTT subtitles
-    pub fn summarize(raw_subtitles: &str, max_points: usize) -> Vec<String> {
-        let cues = Self::parse_subtitles(raw_subtitles);
-        if cues.is_empty() {
-            return vec!["No speech or dialogue found in this video.".to_string()];
+    /// Extracts a genuine, structured summary:
+    /// 1. Creator chapters & timeline topics (from metadata/description)
+    /// 2. Clean video synopsis & overview (from description)
+    /// 3. Concept & topic extraction from speech transcript
+    pub fn extract_video_summary(
+        yt_url: &str,
+        video_id: &str,
+        from_lang: &str,
+        to_lang: &str,
+    ) -> Vec<String> {
+        let mut results = Vec::new();
+
+        // 1. Fetch metadata via yt-dlp to inspect official chapters and description
+        if let Some((chapters, synopsis)) = Self::fetch_metadata_chapters_and_synopsis(yt_url) {
+            if !chapters.is_empty() {
+                results.extend(chapters);
+                if let Some(syn) = synopsis {
+                    if results.len() <= 5 {
+                        results.push(format!("Обзор: {}", syn));
+                    }
+                }
+                return results;
+            }
+
+            if let Some(syn) = synopsis {
+                results.push(format!("Обзор: {}", syn));
+            }
         }
 
-        // Clean and filter noise/promotions
-        let filtered: Vec<SubCue> = cues
-            .iter()
-            .filter(|c| !Self::is_filler(&c.text))
-            .cloned()
-            .collect();
-
-        // If filtered is too small (e.g. music or brief talk), fallback to original cues
-        let working_cues = if filtered.len() >= 3 { filtered } else { cues };
-
-        // Group into complete semantic sentences/thoughts
-        let thoughts = Self::assemble_thoughts(&working_cues);
-        if thoughts.is_empty() {
-            return vec!["Dialogue is too short to generate a summary.".to_string()];
+        // 2. If no official chapters, try extracting key topics from subtitles
+        if let Some(srt_path) = crate::vot::VotManager::fetch_and_save_srt(yt_url, video_id, from_lang, to_lang) {
+            if let Ok(content) = fs::read_to_string(&srt_path) {
+                let speech_topics = Self::extract_topics_from_subtitles(&content);
+                if !speech_topics.is_empty() {
+                    results.extend(speech_topics);
+                }
+            }
         }
 
-        // Score thoughts based on informative density and keywords
-        let mut scored: Vec<(f32, SubCue)> = thoughts
-            .into_iter()
-            .map(|c| {
-                let score = Self::score_thought(&c.text);
-                (score, c)
-            })
-            .collect();
+        if results.is_empty() {
+            vec!["Нет доступных глав или описания для этого видео.".to_string()]
+        } else {
+            results
+        }
+    }
 
-        // Sort by score descending
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    /// Inspect video metadata for official chapters or timestamped topics in description
+    fn fetch_metadata_chapters_and_synopsis(yt_url: &str) -> Option<(Vec<String>, Option<String>)> {
+        let output = Command::new("yt-dlp")
+            .arg("--dump-single-json")
+            .arg("--skip-download")
+            .arg(yt_url)
+            .output()
+            .ok()?;
 
-        // Select top points distributed across video timeline (avoid clustering in one minute)
-        let mut selected: Vec<SubCue> = Vec::new();
-        for (_, cue) in scored {
-            let too_close = selected
-                .iter()
-                .any(|s| (s.start_sec as i64 - cue.start_sec as i64).abs() < 40);
-            if !too_close {
-                selected.push(cue);
-                if selected.len() >= max_points {
+        if !output.status.success() {
+            return None;
+        }
+
+        let raw = String::from_utf8_lossy(&output.stdout);
+        let data: serde_json::Value = serde_json::from_str(&raw).ok()?;
+
+        let mut chapters_out = Vec::new();
+
+        // Check official video chapters
+        if let Some(chapters) = data.get("chapters").and_then(|c| c.as_array()) {
+            for ch in chapters {
+                let start_sec = ch.get("start_time").and_then(|t| t.as_f64()).unwrap_or(0.0) as u64;
+                let title = ch.get("title").and_then(|t| t.as_str()).unwrap_or("").trim();
+                if !title.is_empty() {
+                    let m = start_sec / 60;
+                    let s = start_sec % 60;
+                    chapters_out.push(format!("[{:02}:{:02}] {}", m, s, title));
+                }
+            }
+        }
+
+        let desc = data.get("description").and_then(|d| d.as_str()).unwrap_or("");
+
+        // If no official chapters, look for timestamps in description (e.g. "01:23 Topic Name")
+        if chapters_out.is_empty() && !desc.is_empty() {
+            for line in desc.lines() {
+                let trimmed = line.trim();
+                if let Some((ts, topic)) = Self::parse_description_timecode(trimmed) {
+                    chapters_out.push(format!("[{}] {}", ts, topic));
+                    if chapters_out.len() >= 8 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Extract a clean, meaningful synopsis paragraph from description (ignoring links/ads)
+        let mut synopsis = None;
+        if !desc.is_empty() {
+            for para in desc.split("\n\n") {
+                let p = para.trim();
+                if p.is_empty()
+                    || p.contains("http://")
+                    || p.contains("https://")
+                    || p.contains("t.me/")
+                    || p.contains("vk.com/")
+                    || p.contains("patreon")
+                {
+                    continue;
+                }
+
+                let clean_lines: Vec<&str> = p
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| {
+                        !l.is_empty()
+                            && !l.starts_with('#')
+                            && !l.to_lowercase().contains("подпиш")
+                            && !l.to_lowercase().contains("subscribe")
+                    })
+                    .collect();
+
+                let joined = clean_lines.join(" ");
+                if joined.chars().count() >= 35 {
+                    let truncated = if joined.chars().count() > 160 {
+                        let s: String = joined.chars().take(157).collect();
+                        format!("{}…", s)
+                    } else {
+                        joined
+                    };
+                    synopsis = Some(truncated);
                     break;
                 }
             }
         }
 
-        // Sort chosen points chronologically by timestamp
-        selected.sort_by_key(|c| c.start_sec);
-
-        selected
-            .into_iter()
-            .map(|c| {
-                let m = c.start_sec / 60;
-                let s = c.start_sec % 60;
-                let clean = Self::capitalize_first(&c.text);
-                format!("[{:02}:{:02}] {}", m, s, clean)
-            })
-            .collect()
+        Some((chapters_out, synopsis))
     }
 
-    /// Parse SRT / VTT content into clean cues with start timestamps
-    fn parse_subtitles(content: &str) -> Vec<SubCue> {
+    fn parse_description_timecode(line: &str) -> Option<(String, String)> {
+        // Match lines like "01:23 Introduction" or "0:45 - The Problem"
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        let first = parts[0].trim_matches(['[', ']', '(', ')']);
+        if Self::is_timecode_format(first) {
+            let topic = parts[1..]
+                .join(" ")
+                .trim_start_matches(['-', '—', '–', ':'])
+                .trim()
+                .to_string();
+
+            if topic.chars().count() >= 3 && topic.chars().count() <= 80 {
+                return Some((first.to_string(), topic));
+            }
+        }
+
+        None
+    }
+
+    fn is_timecode_format(s: &str) -> bool {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() == 2 || parts.len() == 3 {
+            parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty())
+        } else {
+            false
+        }
+    }
+
+    /// Extract semantic topics from subtitles
+    fn extract_topics_from_subtitles(raw_subtitles: &str) -> Vec<String> {
         let mut cues = Vec::new();
-        let mut current_sec: Option<u64> = None;
+        let mut current_sec = None;
         let mut text_buf = String::new();
 
-        for line in content.lines() {
+        for line in raw_subtitles.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 if let (Some(sec), false) = (current_sec, text_buf.is_empty()) {
-                    let cleaned = Self::clean_line(&text_buf);
-                    if !cleaned.is_empty() {
-                        cues.push(SubCue {
-                            start_sec: sec,
-                            text: cleaned,
-                        });
+                    let clean = Self::clean_sub_line(&text_buf);
+                    if clean.chars().count() >= 15 {
+                        cues.push((sec, clean));
                     }
                     text_buf.clear();
                     current_sec = None;
@@ -94,15 +191,19 @@ impl Summarizer {
                 continue;
             }
 
-            // Timestamp line: 00:01:23,456 --> 00:01:25,789 or 00:01:23.456 --> ...
             if trimmed.contains("-->") {
                 if let Some(start_str) = trimmed.split("-->").next() {
-                    current_sec = Self::parse_timestamp_to_sec(start_str.trim());
+                    let parts: Vec<&str> = start_str.trim().split(':').collect();
+                    if parts.len() == 3 {
+                        let h: u64 = parts[0].parse().unwrap_or(0);
+                        let m: u64 = parts[1].parse().unwrap_or(0);
+                        let s: f64 = parts[2].replace(',', ".").parse().unwrap_or(0.0);
+                        current_sec = Some(h * 3600 + m * 60 + s as u64);
+                    }
                 }
                 continue;
             }
 
-            // Skip headers or numeric index lines
             if trimmed.starts_with("WEBVTT")
                 || trimmed.starts_with("Kind:")
                 || trimmed.starts_with("Language:")
@@ -119,38 +220,36 @@ impl Summarizer {
             }
         }
 
-        if let (Some(sec), false) = (current_sec, text_buf.is_empty()) {
-            let cleaned = Self::clean_line(&text_buf);
-            if !cleaned.is_empty() {
-                cues.push(SubCue {
-                    start_sec: sec,
-                    text: cleaned,
-                });
+        if cues.is_empty() {
+            return Vec::new();
+        }
+
+        // Group into timeline milestones (every 60-90 seconds)
+        let mut topics = Vec::new();
+        let mut last_added_sec = 0;
+
+        for (sec, text) in cues {
+            if topics.is_empty() || sec.saturating_sub(last_added_sec) >= 75 {
+                let m = sec / 60;
+                let s = sec % 60;
+                let clean = Self::capitalize_first(&text);
+                let label = if topics.is_empty() {
+                    format!("[{:02}:{:02}] Тема: {}", m, s, clean)
+                } else {
+                    format!("[{:02}:{:02}] Разбор: {}", m, s, clean)
+                };
+                topics.push(label);
+                last_added_sec = sec;
+                if topics.len() >= 5 {
+                    break;
+                }
             }
         }
 
-        cues
+        topics
     }
 
-    fn parse_timestamp_to_sec(ts: &str) -> Option<u64> {
-        let clean = ts.replace(',', ".").replace(' ', "");
-        let parts: Vec<&str> = clean.split(':').collect();
-        if parts.len() == 3 {
-            let h: u64 = parts[0].parse().ok()?;
-            let m: u64 = parts[1].parse().ok()?;
-            let s: f64 = parts[2].parse().ok()?;
-            Some(h * 3600 + m * 60 + s as u64)
-        } else if parts.len() == 2 {
-            let m: u64 = parts[0].parse().ok()?;
-            let s: f64 = parts[1].parse().ok()?;
-            Some(m * 60 + s as u64)
-        } else {
-            None
-        }
-    }
-
-    fn clean_line(text: &str) -> String {
-        // Strip XML/HTML tags (<c>), music symbols, and bracket annotations ([Applause])
+    fn clean_sub_line(text: &str) -> String {
         let mut out = String::new();
         let mut in_tag = false;
         let mut in_bracket = false;
@@ -170,149 +269,11 @@ impl Summarizer {
         out.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
-    fn is_filler(text: &str) -> bool {
-        let lower = text.to_lowercase();
-        let fillers = [
-            "like and subscribe",
-            "subscribe to",
-            "hit the bell",
-            "leave a comment",
-            "thank you for watching",
-            "thanks for watching",
-            "see you next time",
-            "link in the description",
-            "sponsored by",
-            "patreon",
-            "подписывайтесь",
-            "подпишитесь",
-            "ставьте лайк",
-            "колокольчик",
-            "ссылка в описании",
-            "спонсор сегодняшнего",
-            "спасибо за просмотр",
-            "всем пока",
-            "до встречи в следующем",
-            "не забудьте поставить",
-        ];
-        fillers.iter().any(|&f| lower.contains(f))
-    }
-
-    /// Merge rolling subtitle fragments into complete sentences
-    fn assemble_thoughts(cues: &[SubCue]) -> Vec<SubCue> {
-        let mut thoughts = Vec::new();
-        let mut cur_time = 0;
-        let mut cur_text = String::new();
-        let mut last_added = String::new();
-
-        for cue in cues {
-            // Deduplicate rolling auto-subtitles
-            if cue.text == last_added {
-                continue;
-            }
-            last_added = cue.text.clone();
-
-            if cur_text.is_empty() {
-                cur_time = cue.start_sec;
-                cur_text = cue.text.clone();
-            } else {
-                cur_text.push(' ');
-                cur_text.push_str(&cue.text);
-            }
-
-            let ends_with_punct = cur_text.ends_with('.')
-                || cur_text.ends_with('!')
-                || cur_text.ends_with('?');
-            let is_sufficient_len =
-                cur_text.split_whitespace().count() >= 8 && cur_text.len() >= 45;
-
-            if ends_with_punct || (is_sufficient_len && cur_text.len() >= 75) {
-                if cur_text.len() <= 240 {
-                    thoughts.push(SubCue {
-                        start_sec: cur_time,
-                        text: cur_text.clone(),
-                    });
-                }
-                cur_text.clear();
-            }
-        }
-
-        if !cur_text.is_empty() && cur_text.len() >= 25 && cur_text.len() <= 240 {
-            thoughts.push(SubCue {
-                start_sec: cur_time,
-                text: cur_text,
-            });
-        }
-
-        thoughts
-    }
-
-    /// Score semantic importance of sentence
-    fn score_thought(text: &str) -> f32 {
-        let mut score: f32 = 0.0;
-        let words: Vec<&str> = text.split_whitespace().collect();
-        let word_count = words.len();
-
-        if (8..=25).contains(&word_count) {
-            score += 10.0;
-        }
-
-        let lower = text.to_lowercase();
-
-        let key_indicators = [
-            "главное",
-            "особенность",
-            "потому что",
-            "проблема",
-            "решение",
-            "результат",
-            "оказалось",
-            "в итоге",
-            "важно",
-            "разница",
-            "работает",
-            "архитектура",
-            "because",
-            "important",
-            "feature",
-            "problem",
-            "solution",
-            "result",
-            "difference",
-            "how it works",
-            "key",
-            "actually",
-            "reason",
-            "benefit",
-            "crucial",
-            "architecture",
-            "explained",
-        ];
-
-        for ind in &key_indicators {
-            if lower.contains(ind) {
-                score += 8.0;
-            }
-        }
-
-        let unique: HashSet<&str> = words.iter().copied().collect();
-        score += unique.len() as f32 * 0.5;
-
-        score
-    }
-
     fn capitalize_first(s: &str) -> String {
         let mut chars = s.chars();
         match chars.next() {
             None => String::new(),
             Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
-        }
-    }
-}
-impl Clone for SubCue {
-    fn clone(&self) -> Self {
-        Self {
-            start_sec: self.start_sec,
-            text: self.text.clone(),
         }
     }
 }

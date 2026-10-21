@@ -19,7 +19,6 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use search::{SearchEngine, VideoItem};
 use std::{
     error::Error,
-    fs,
     io,
     sync::mpsc::{channel, Receiver, Sender},
     thread,
@@ -29,7 +28,6 @@ use storage::{AppStorage, HistoryEntry};
 use summary::Summarizer;
 use theme::SystemPalette;
 use thumbnail::ThumbnailManager;
-use vot::VotManager;
 
 enum AppEvent {
     SearchResults(Vec<VideoItem>),
@@ -253,8 +251,8 @@ impl App {
                 return;
             }
 
-            self.set_status(&format!("Generating smart summary for: {}", item.title));
-            self.progress = Some((0.3, "Extracting and parsing speech subtitles...".to_string()));
+            self.set_status(&format!("Generating summary for: {}", item.title));
+            self.progress = Some((0.3, "Extracting video chapters & content...".to_string()));
             self.progress_time = Instant::now();
 
             let tx = self.tx.clone();
@@ -263,18 +261,9 @@ impl App {
             let yt_url = format!("https://www.youtube.com/watch?v={}", vid_id);
 
             thread::spawn(move || {
-                if let Some(path) = VotManager::fetch_and_save_srt(&yt_url, &vid_id, &from_lang, &to_lang) {
-                    if let Ok(content) = fs::read_to_string(path) {
-                        let lines = Summarizer::summarize(&content, 5);
-                        let _ = tx.send(AppEvent::SummaryReady(vid_id, lines));
-                        let _ = tx.send(AppEvent::ProgressUpdate(1.0, "Summary ready!".to_string()));
-                        return;
-                    }
-                }
-                let _ = tx.send(AppEvent::SummaryReady(
-                    vid_id,
-                    vec!["No spoken dialogue or subtitles found to summarize.".to_string()],
-                ));
+                let lines = Summarizer::extract_video_summary(&yt_url, &vid_id, &from_lang, &to_lang);
+                let _ = tx.send(AppEvent::SummaryReady(vid_id, lines));
+                let _ = tx.send(AppEvent::ProgressUpdate(1.0, "Summary ready!".to_string()));
             });
         }
     }
