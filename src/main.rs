@@ -523,7 +523,7 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                     _ => {}
                 }
             }
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => {
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
                 match app.settings_idx {
                     0 => {
                         let cur_i = from_langs.iter().position(|&l| l == app.cfg.translation_from).unwrap_or(0);
