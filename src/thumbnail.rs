@@ -156,11 +156,15 @@ pub fn render_thumbnail(video_id: &str, w: u16, h: u16, mode: &str) -> Option<Th
     let size_arg = format!("{}x{}", req_w, req_h);
 
     let output = Command::new("chafa")
+        .arg("--probe=off")
         .arg("-f")
         .arg(proto)
+        .arg("-c")
+        .arg("full")
         .arg("-s")
         .arg(&size_arg)
         .arg(&img_path)
+        .stdin(std::process::Stdio::null())
         .output()
         .ok()?;
 
