@@ -1,5 +1,6 @@
-use std::fs;
+use crate::config::ThemeChoice;
 use ratatui::style::Color;
+use std::fs;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SystemPalette {
@@ -23,7 +24,62 @@ impl Default for SystemPalette {
 }
 
 impl SystemPalette {
-    pub fn load() -> Self {
+    pub fn load_for_theme(choice: ThemeChoice) -> Self {
+        match choice {
+            ThemeChoice::Auto => Self::load_system(),
+            ThemeChoice::Catppuccin => Self {
+                primary: Color::Rgb(203, 166, 247),   // Mocha Mauve
+                secondary: Color::Rgb(180, 190, 254), // Lavender
+                tertiary: Color::Rgb(245, 194, 231),  // Pink
+                on_surface: Color::Rgb(205, 214, 244),
+                muted: Color::Rgb(108, 112, 134),
+            },
+            ThemeChoice::TokyoNight => Self {
+                primary: Color::Rgb(125, 207, 255),  // Neon Cyan
+                secondary: Color::Rgb(187, 154, 247), // Purple
+                tertiary: Color::Rgb(255, 158, 100), // Orange
+                on_surface: Color::Rgb(192, 202, 245),
+                muted: Color::Rgb(86, 95, 137),
+            },
+            ThemeChoice::Nord => Self {
+                primary: Color::Rgb(136, 192, 208),  // Frost Cyan
+                secondary: Color::Rgb(129, 161, 193), // Frost Blue
+                tertiary: Color::Rgb(235, 203, 139),  // Nord Yellow
+                on_surface: Color::Rgb(236, 239, 244),
+                muted: Color::Rgb(76, 86, 106),
+            },
+            ThemeChoice::Gruvbox => Self {
+                primary: Color::Rgb(254, 128, 25),  // Gruvbox Orange
+                secondary: Color::Rgb(250, 189, 47), // Yellow
+                tertiary: Color::Rgb(184, 187, 38),  // Green
+                on_surface: Color::Rgb(235, 219, 178),
+                muted: Color::Rgb(146, 131, 116),
+            },
+            ThemeChoice::Dracula => Self {
+                primary: Color::Rgb(189, 147, 249),  // Purple
+                secondary: Color::Rgb(255, 121, 198), // Pink
+                tertiary: Color::Rgb(80, 250, 123),   // Green
+                on_surface: Color::Rgb(248, 248, 242),
+                muted: Color::Rgb(98, 114, 164),
+            },
+            ThemeChoice::Amber => Self {
+                primary: Color::Rgb(255, 176, 0),    // Vintage Amber
+                secondary: Color::Rgb(255, 196, 64),
+                tertiary: Color::Rgb(255, 140, 0),
+                on_surface: Color::Rgb(240, 220, 180),
+                muted: Color::Rgb(130, 100, 50),
+            },
+            ThemeChoice::White => Self {
+                primary: Color::Rgb(240, 240, 240),
+                secondary: Color::Rgb(200, 200, 200),
+                tertiary: Color::Rgb(255, 255, 255),
+                on_surface: Color::Rgb(230, 230, 230),
+                muted: Color::Rgb(90, 90, 90),
+            },
+        }
+    }
+
+    pub fn load_system() -> Self {
         let mut palette = Self::default();
         if let Some(mut path) = dirs::config_dir() {
             path.push("hypr/scheme/current.conf");

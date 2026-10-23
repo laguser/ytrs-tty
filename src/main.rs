@@ -61,8 +61,8 @@ struct App {
 impl App {
     fn new(initial_query: Option<String>) -> Self {
         let (tx, rx) = channel();
-        let palette = SystemPalette::load();
         let cfg = AppConfig::load();
+        let palette = SystemPalette::load_for_theme(cfg.theme);
         let storage = AppStorage::load();
 
         let tx_thumb = tx.clone();
@@ -463,6 +463,21 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
     }
 
     if app.show_settings {
+        let themes = [
+            config::ThemeChoice::Auto,
+            config::ThemeChoice::Catppuccin,
+            config::ThemeChoice::TokyoNight,
+            config::ThemeChoice::Nord,
+            config::ThemeChoice::Gruvbox,
+            config::ThemeChoice::Dracula,
+            config::ThemeChoice::Amber,
+            config::ThemeChoice::White,
+        ];
+        let p_styles = [
+            config::ProgressStyle::Tape,
+            config::ProgressStyle::Blocky,
+            config::ProgressStyle::Minimal,
+        ];
         let from_langs = ["en", "auto", "ru", "zh", "de", "fr", "es", "ja", "ko", "it"];
         let to_langs = ["ru", "en", "kk", "uk", "de", "es", "zh", "fr", "uz"];
         let gfx_modes = ["auto", "kitty", "sixels", "iterm", "symbols", "off"];
@@ -479,35 +494,46 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if app.settings_idx < 9 {
+                if app.settings_idx < 11 {
                     app.settings_idx += 1;
                 }
             }
             KeyCode::Left | KeyCode::Char('h') => {
                 match app.settings_idx {
                     0 => {
+                        let cur_i = themes.iter().position(|&t| t == app.cfg.theme).unwrap_or(0);
+                        let next_i = if cur_i == 0 { themes.len() - 1 } else { cur_i - 1 };
+                        app.cfg.theme = themes[next_i];
+                        app.palette = SystemPalette::load_for_theme(app.cfg.theme);
+                    }
+                    1 => {
+                        let cur_i = p_styles.iter().position(|&s| s == app.cfg.progress_style).unwrap_or(0);
+                        let next_i = if cur_i == 0 { p_styles.len() - 1 } else { cur_i - 1 };
+                        app.cfg.progress_style = p_styles[next_i];
+                    }
+                    2 => {
                         let cur_i = from_langs.iter().position(|&l| l == app.cfg.translation_from).unwrap_or(0);
                         let next_i = if cur_i == 0 { from_langs.len() - 1 } else { cur_i - 1 };
                         app.cfg.translation_from = from_langs[next_i].to_string();
                     }
-                    1 => {
+                    3 => {
                         let cur_i = to_langs.iter().position(|&l| l == app.cfg.translation_to).unwrap_or(0);
                         let next_i = if cur_i == 0 { to_langs.len() - 1 } else { cur_i - 1 };
                         app.cfg.translation_to = to_langs[next_i].to_string();
                     }
-                    2 => {
+                    4 => {
                         app.cfg.subs_lang = match app.cfg.subs_lang.as_str() {
                             "ru" => "off".to_string(),
                             "en" => "ru".to_string(),
                             _ => "en".to_string(),
                         };
                     }
-                    3 => {
+                    5 => {
                         let cur_i = gfx_modes.iter().position(|&m| m == app.cfg.graphics_mode).unwrap_or(0);
                         let next_i = if cur_i == 0 { gfx_modes.len() - 1 } else { cur_i - 1 };
                         app.cfg.graphics_mode = gfx_modes[next_i].to_string();
                     }
-                    4 => {
+                    6 => {
                         app.cfg.max_res_height = match app.cfg.max_res_height {
                             2160 => 1440,
                             1440 => 1080,
@@ -515,39 +541,50 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                             _ => 720,
                         };
                     }
-                    5 => app.cfg.orig_volume = (app.cfg.orig_volume - 0.05).max(0.0),
-                    6 => app.cfg.vot_volume = (app.cfg.vot_volume - 0.05).max(0.1),
-                    7 => app.cfg.sponsorblock = !app.cfg.sponsorblock,
-                    8 => app.cfg.enable_trending = !app.cfg.enable_trending,
-                    9 => app.cfg.enable_history = !app.cfg.enable_history,
+                    7 => app.cfg.orig_volume = (app.cfg.orig_volume - 0.05).max(0.0),
+                    8 => app.cfg.vot_volume = (app.cfg.vot_volume - 0.05).max(0.1),
+                    9 => app.cfg.sponsorblock = !app.cfg.sponsorblock,
+                    10 => app.cfg.enable_trending = !app.cfg.enable_trending,
+                    11 => app.cfg.enable_history = !app.cfg.enable_history,
                     _ => {}
                 }
             }
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
                 match app.settings_idx {
                     0 => {
+                        let cur_i = themes.iter().position(|&t| t == app.cfg.theme).unwrap_or(0);
+                        let next_i = (cur_i + 1) % themes.len();
+                        app.cfg.theme = themes[next_i];
+                        app.palette = SystemPalette::load_for_theme(app.cfg.theme);
+                    }
+                    1 => {
+                        let cur_i = p_styles.iter().position(|&s| s == app.cfg.progress_style).unwrap_or(0);
+                        let next_i = (cur_i + 1) % p_styles.len();
+                        app.cfg.progress_style = p_styles[next_i];
+                    }
+                    2 => {
                         let cur_i = from_langs.iter().position(|&l| l == app.cfg.translation_from).unwrap_or(0);
                         let next_i = (cur_i + 1) % from_langs.len();
                         app.cfg.translation_from = from_langs[next_i].to_string();
                     }
-                    1 => {
+                    3 => {
                         let cur_i = to_langs.iter().position(|&l| l == app.cfg.translation_to).unwrap_or(0);
                         let next_i = (cur_i + 1) % to_langs.len();
                         app.cfg.translation_to = to_langs[next_i].to_string();
                     }
-                    2 => {
+                    4 => {
                         app.cfg.subs_lang = match app.cfg.subs_lang.as_str() {
                             "ru" => "en".to_string(),
                             "en" => "off".to_string(),
                             _ => "ru".to_string(),
                         };
                     }
-                    3 => {
+                    5 => {
                         let cur_i = gfx_modes.iter().position(|&m| m == app.cfg.graphics_mode).unwrap_or(0);
                         let next_i = (cur_i + 1) % gfx_modes.len();
                         app.cfg.graphics_mode = gfx_modes[next_i].to_string();
                     }
-                    4 => {
+                    6 => {
                         app.cfg.max_res_height = match app.cfg.max_res_height {
                             720 => 1080,
                             1080 => 1440,
@@ -555,11 +592,11 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                             _ => 2160,
                         };
                     }
-                    5 => app.cfg.orig_volume = (app.cfg.orig_volume + 0.05).min(1.0),
-                    6 => app.cfg.vot_volume = (app.cfg.vot_volume + 0.05).min(2.0),
-                    7 => app.cfg.sponsorblock = !app.cfg.sponsorblock,
-                    8 => app.cfg.enable_trending = !app.cfg.enable_trending,
-                    9 => app.cfg.enable_history = !app.cfg.enable_history,
+                    7 => app.cfg.orig_volume = (app.cfg.orig_volume + 0.05).min(1.0),
+                    8 => app.cfg.vot_volume = (app.cfg.vot_volume + 0.05).min(2.0),
+                    9 => app.cfg.sponsorblock = !app.cfg.sponsorblock,
+                    10 => app.cfg.enable_trending = !app.cfg.enable_trending,
+                    11 => app.cfg.enable_history = !app.cfg.enable_history,
                     _ => {}
                 }
             }
@@ -592,9 +629,7 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
     }
 
     match key.code {
-        KeyCode::Char('q') => {
-            return true;
-        }
+        // Esc: if in History/Bookmarks/Channel, return to search/trending
         KeyCode::Esc => {
             if !app.query_input.is_empty() {
                 app.query_input.clear();
@@ -603,30 +638,30 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                 return true;
             }
         }
-        KeyCode::Char('s') => {
+        KeyCode::Char('s') | KeyCode::Char('ы') | KeyCode::Char('Ы') => {
             app.show_settings = true;
         }
-        KeyCode::Char('/') => {
+        KeyCode::Char('/') | KeyCode::Char('i') | KeyCode::Char('ш') | KeyCode::Char('Ш') => {
             app.is_typing_search = true;
         }
         // Реки / Trending
-        KeyCode::Char('t') => {
+        KeyCode::Char('t') | KeyCode::Char('е') | KeyCode::Char('Е') => {
             app.show_trending();
         }
         // Related
-        KeyCode::Char('r') => {
+        KeyCode::Char('r') | KeyCode::Char('к') | KeyCode::Char('К') => {
             app.show_related();
         }
         // AI Summary
-        KeyCode::Char('x') => {
+        KeyCode::Char('x') | KeyCode::Char('ч') | KeyCode::Char('Ч') => {
             app.generate_summary();
         }
         // History
-        KeyCode::Char('h') => {
+        KeyCode::Char('h') | KeyCode::Char('р') | KeyCode::Char('Р') => {
             app.show_history();
         }
         // Bookmarks
-        KeyCode::Char('b') => {
+        KeyCode::Char('b') | KeyCode::Char('и') | KeyCode::Char('И') => {
             if app.items.is_empty() {
                 app.show_bookmarks();
             } else {
@@ -634,15 +669,15 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
             }
         }
         // Channel
-        KeyCode::Char('u') | KeyCode::Char('c') => {
+        KeyCode::Char('u') | KeyCode::Char('г') | KeyCode::Char('Г') | KeyCode::Char('c') | KeyCode::Char('с') | KeyCode::Char('С') => {
             app.open_channel();
         }
-        KeyCode::Char('j') | KeyCode::Down => {
+        KeyCode::Char('j') | KeyCode::Char('о') | KeyCode::Char('О') | KeyCode::Down => {
             if !app.items.is_empty() && app.selected_idx + 1 < app.items.len() {
                 app.selected_idx += 1;
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        KeyCode::Char('k') | KeyCode::Char('л') | KeyCode::Char('Л') | KeyCode::Up => {
             if app.selected_idx > 0 {
                 app.selected_idx -= 1;
             }
@@ -656,7 +691,7 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                 app.set_status(&format!("Playing: {}", title));
             }
         }
-        KeyCode::Char('v') => {
+        KeyCode::Char('v') | KeyCode::Char('м') | KeyCode::Char('М') => {
             if let Some(item) = app.items.get(app.selected_idx) {
                 let id = item.id.clone();
                 let title = item.title.clone();
@@ -677,7 +712,7 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                 });
             }
         }
-        KeyCode::Char('a') => {
+        KeyCode::Char('a') | KeyCode::Char('ф') | KeyCode::Char('Ф') => {
             if let Some(item) = app.items.get(app.selected_idx) {
                 let id = item.id.clone();
                 let title = item.title.clone();
@@ -686,12 +721,15 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
                 app.set_status(&format!("Audio stream started: {}", title));
             }
         }
-        KeyCode::Char('y') => {
+        KeyCode::Char('y') | KeyCode::Char('н') | KeyCode::Char('Н') => {
             if let Some(item) = app.items.get(app.selected_idx) {
                 if Player::copy_url(&item.id) {
                     app.set_status("URL copied to clipboard!");
                 }
             }
+        }
+        KeyCode::Char('q') | KeyCode::Char('й') | KeyCode::Char('Й') => {
+            return true;
         }
         _ => {}
     }

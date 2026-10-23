@@ -2,8 +2,56 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeChoice {
+    Auto,       // Hyprland / system scheme
+    Catppuccin, // Mocha Mauve (#cba6f7)
+    TokyoNight, // Neon Cyan (#7dcfff)
+    Nord,       // Frost Blue (#88c0d0)
+    Gruvbox,    // Retro Orange (#fe8019)
+    Dracula,    // Purple (#bd93f9)
+    Amber,      // Vintage Amber (#ffb000)
+    White,      // Pure Monochrome
+}
+
+impl ThemeChoice {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ThemeChoice::Auto => "auto (hypr/term)",
+            ThemeChoice::Catppuccin => "catppuccin",
+            ThemeChoice::TokyoNight => "tokyo night",
+            ThemeChoice::Nord => "nord",
+            ThemeChoice::Gruvbox => "gruvbox",
+            ThemeChoice::Dracula => "dracula",
+            ThemeChoice::Amber => "amber",
+            ThemeChoice::White => "white",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgressStyle {
+    Tape,    // ━━━●───
+    Blocky,  // ████▓░░
+    Minimal, // ···◆   
+}
+
+impl ProgressStyle {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ProgressStyle::Tape => "tape (smooth)",
+            ProgressStyle::Blocky => "blocky (solid)",
+            ProgressStyle::Minimal => "minimal (dots)",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default = "default_theme")]
+    pub theme: ThemeChoice,
+    #[serde(default = "default_progress_style")]
+    pub progress_style: ProgressStyle,
     pub vot_volume: f32,          // e.g. 1.0 (100%)
     pub orig_volume: f32,         // e.g. 0.15 (15%)
     pub max_res_height: u32,      // e.g. 1080
@@ -20,9 +68,19 @@ pub struct AppConfig {
     pub enable_summary: bool,     // Smart Summary (TL;DR)
 }
 
+fn default_theme() -> ThemeChoice {
+    ThemeChoice::Auto
+}
+
+fn default_progress_style() -> ProgressStyle {
+    ProgressStyle::Tape
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            theme: ThemeChoice::Auto,
+            progress_style: ProgressStyle::Tape,
             vot_volume: 1.0,
             orig_volume: 0.15,
             max_res_height: 1080,

@@ -429,8 +429,8 @@ fn render_details_pane(
 
 fn render_settings_modal(f: &mut Frame, selected: usize, cfg: &AppConfig, p: &SystemPalette) {
     let area = f.area();
-    let modal_w = 68.min(area.width.saturating_sub(4));
-    let modal_h = 16.min(area.height.saturating_sub(2));
+    let modal_w = 70.min(area.width.saturating_sub(4));
+    let modal_h = 18.min(area.height.saturating_sub(2));
 
     let modal_rect = Rect {
         x: (area.width.saturating_sub(modal_w)) / 2,
@@ -451,13 +451,15 @@ fn render_settings_modal(f: &mut Frame, selected: usize, cfg: &AppConfig, p: &Sy
     let vot_vol_pct = (cfg.vot_volume * 100.0).round() as u32;
 
     let rows: Vec<(&str, String)> = vec![
+        ("Theme / Color Palette", format!("‹  {}  ›", cfg.theme.name())),
+        ("Progress Bar Style", format!("‹  {}  ›", cfg.progress_style.name())),
         ("Audio Source Lang (From)", format!("‹  {}  ›", lang_display(&cfg.translation_from))),
         ("Voiceover Target Lang (To)", format!("‹  {}  ›", lang_display(&cfg.translation_to))),
         ("Subtitles", format!("‹  {}  ›", cfg.subs_lang.to_uppercase())),
         ("Picture Graphics Mode", format!("‹  {}  ›", cfg.graphics_mode)),
         ("Max Resolution", format!("‹  {}p  ›", cfg.max_res_height)),
-        ("Original Video Volume", render_slider(orig_vol_pct, 100)),
-        ("Voiceover (VOT) Volume", render_slider(vot_vol_pct, 200)),
+        ("Original Video Volume", render_slider(orig_vol_pct, 100, cfg.progress_style)),
+        ("Voiceover (VOT) Volume", render_slider(vot_vol_pct, 200, cfg.progress_style)),
         ("SponsorBlock (Auto-Skip)", render_toggle(cfg.sponsorblock)),
         ("Trending on Launch (Реки)", render_toggle(cfg.enable_trending)),
         ("History & Bookmarks", render_toggle(cfg.enable_history)),
@@ -525,19 +527,45 @@ fn lang_display(code: &str) -> String {
     format!("{:<4} ({})", code.to_uppercase(), name)
 }
 
-fn render_slider(val: u32, max: u32) -> String {
+fn render_slider(val: u32, max: u32, style: crate::config::ProgressStyle) -> String {
     let width = 12;
     let ratio = (val as f32 / max as f32).clamp(0.0, 1.0);
     let filled = (width as f32 * ratio).round() as usize;
 
     let mut bar = String::new();
-    for i in 0..width {
-        if i < filled {
-            bar.push('━');
-        } else if i == filled {
-            bar.push('╸');
-        } else {
-            bar.push('─');
+    match style {
+        crate::config::ProgressStyle::Tape => {
+            for i in 0..width {
+                if i < filled {
+                    bar.push('━');
+                } else if i == filled {
+                    bar.push('●');
+                } else {
+                    bar.push('─');
+                }
+            }
+        }
+        crate::config::ProgressStyle::Blocky => {
+            for i in 0..width {
+                if i < filled {
+                    bar.push('█');
+                } else if i == filled {
+                    bar.push('▓');
+                } else {
+                    bar.push('░');
+                }
+            }
+        }
+        crate::config::ProgressStyle::Minimal => {
+            for i in 0..width {
+                if i < filled {
+                    bar.push('·');
+                } else if i == filled {
+                    bar.push('◆');
+                } else {
+                    bar.push(' ');
+                }
+            }
         }
     }
     format!("[{:>3}%] {}", val, bar)
@@ -566,11 +594,11 @@ fn render_bottom_bar(
 
     // 1. If progress or search is active, render sleek conveyor progress bar!
     if let Some((val, ref label)) = progress {
-        let line = render_minimal_progress_bar(val, label, w, p);
+        let line = render_minimal_progress_bar(val, label, w, p, _cfg.progress_style);
         f.render_widget(Paragraph::new(line), area);
         return;
     } else if is_searching {
-        let line = render_minimal_progress_bar(0.45, "Loading YouTube...", w, p);
+        let line = render_minimal_progress_bar(0.45, "Loading YouTube...", w, p, _cfg.progress_style);
         f.render_widget(Paragraph::new(line), area);
         return;
     }
@@ -648,11 +676,12 @@ fn render_minimal_progress_bar(
     label: &str,
     total_w: usize,
     p: &SystemPalette,
+    style: crate::config::ProgressStyle,
 ) -> Line<'static> {
     let ratio = progress.clamp(0.0, 1.0) as f64;
     let pct = (ratio * 100.0) as u32;
 
-    let bar_w = 20.min(total_w.saturating_sub(label.chars().count() + 18)).max(8);
+    let bar_w = 24.min(total_w.saturating_sub(label.chars().count() + 18)).max(8);
     let filled_w = (bar_w as f64 * ratio).round() as usize;
 
     let mut spans = Vec::new();
@@ -663,15 +692,43 @@ fn render_minimal_progress_bar(
     ));
 
     spans.push(Span::styled("[", Style::default().fg(Color::Rgb(60, 64, 70))));
-    for i in 0..bar_w {
-        if i < filled_w {
-            spans.push(Span::styled("━", Style::default().fg(p.primary).add_modifier(Modifier::BOLD)));
-        } else if i == filled_w {
-            spans.push(Span::styled("╸", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
-        } else {
-            spans.push(Span::styled("─", Style::default().fg(Color::Rgb(45, 48, 52))));
+
+    match style {
+        crate::config::ProgressStyle::Tape => {
+            for i in 0..bar_w {
+                if i < filled_w {
+                    spans.push(Span::styled("━", Style::default().fg(p.primary).add_modifier(Modifier::BOLD)));
+                } else if i == filled_w {
+                    spans.push(Span::styled("●", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                } else {
+                    spans.push(Span::styled("─", Style::default().fg(Color::Rgb(45, 48, 52))));
+                }
+            }
+        }
+        crate::config::ProgressStyle::Blocky => {
+            for i in 0..bar_w {
+                if i < filled_w {
+                    spans.push(Span::styled("█", Style::default().fg(p.primary).add_modifier(Modifier::BOLD)));
+                } else if i == filled_w {
+                    spans.push(Span::styled("▓", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                } else {
+                    spans.push(Span::styled("░", Style::default().fg(Color::Rgb(45, 48, 52))));
+                }
+            }
+        }
+        crate::config::ProgressStyle::Minimal => {
+            for i in 0..bar_w {
+                if i < filled_w {
+                    spans.push(Span::styled("·", Style::default().fg(p.primary).add_modifier(Modifier::BOLD)));
+                } else if i == filled_w {
+                    spans.push(Span::styled("◆", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                } else {
+                    spans.push(Span::styled(" ", Style::default().fg(Color::Rgb(45, 48, 52))));
+                }
+            }
         }
     }
+
     spans.push(Span::styled("] ", Style::default().fg(Color::Rgb(60, 64, 70))));
     spans.push(Span::styled(
         format!("{:>3}%", pct),
