@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 authors = ["laguser <laguser@users.noreply.github.com>"]
 description = "Fast minimalist YouTube CLI / TUI viewer in Rust with real picture thumbnails (Kitty/Sixel/Chafa), Yandex Voice-Over translation, and smart AI summaries."
+license = "MIT"
+repository = "https://github.com/laguser/ytrs"
+readme = "README.md"
+keywords = ["youtube", "tui", "cli", "player", "voiceover"]
+categories = ["command-line-utilities", "multimedia::video"]
 
 [[bin]]
 name = "ytrs"
