@@ -53,6 +53,8 @@ impl Summarizer {
     /// Inspect video metadata for official chapters or timestamped topics in description
     fn fetch_metadata_chapters_and_synopsis(yt_url: &str) -> Option<(Vec<String>, Option<String>)> {
         let output = Command::new("yt-dlp")
+            .arg("--no-playlist")
+            .arg("--no-warnings")
             .arg("--dump-single-json")
             .arg("--skip-download")
             .arg(yt_url)

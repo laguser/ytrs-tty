@@ -21,6 +21,7 @@ pub fn render(
     progress: Option<(f32, String)>,
     show_settings: bool,
     settings_idx: usize,
+    show_download: Option<usize>,
     summary_text: Option<&[String]>,
     is_bookmarked: bool,
     has_thumbnail: bool,
@@ -46,6 +47,7 @@ pub fn render(
         ])
         .split(size);
 
+    // Top Search / Header: modern minimal line with subtle cues
     render_search_bar(f, query_input, is_typing_search, is_searching, chunks[0], palette, cfg);
 
     let mut thumb_rect = None;
@@ -80,6 +82,10 @@ pub fn render(
         render_settings_modal(f, settings_idx, cfg, palette);
     }
 
+    if let Some(dl_idx) = show_download {
+        render_download_modal(f, dl_idx, items.get(selected_idx), cfg, palette);
+    }
+
     thumb_rect
 }
 
@@ -92,16 +98,21 @@ fn render_search_bar(
     p: &SystemPalette,
     cfg: &AppConfig,
 ) {
-    let prompt_icon = if is_typing { "⌕ " } else { "· " };
+    let prompt_icon = if is_typing { "⌕ " } else { "› " };
     let prompt_color = if is_typing { p.primary } else { p.muted };
 
     let mut left_spans = vec![
-        Span::styled(format!("  {} ", prompt_icon), Style::default().fg(prompt_color).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("  {}", prompt_icon), Style::default().fg(prompt_color).add_modifier(Modifier::BOLD)),
     ];
 
     if input.is_empty() && !is_typing {
+        let hint = if cfg.enable_trending {
+            "Search or press '/' · [t] реки · [s] settings"
+        } else {
+            "Search or press '/' · [s] settings"
+        };
         left_spans.push(Span::styled(
-            "press '/' to search YouTube  ·  [t] реки  ·  [s] settings",
+            hint,
             Style::default().fg(p.muted),
         ));
     } else {
@@ -121,7 +132,7 @@ fn render_search_bar(
         ));
     }
 
-    let right_info = format!("VOT: {} → {}  ·  ytrs  ", cfg.translation_from.to_uppercase(), cfg.translation_to.to_uppercase());
+    let right_info = format!("VOT: {} → {}  ", cfg.translation_from.to_uppercase(), cfg.translation_to.to_uppercase());
     let left_len = left_spans.iter().map(|s| s.content.chars().count()).sum::<usize>();
     let total_w = area.width as usize;
 
@@ -189,9 +200,9 @@ fn render_results_area(
     let split = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(53), // Left: Video list
+            Constraint::Percentage(55), // Left: Clean video list
             Constraint::Length(1),      // Low-contrast vertical divider
-            Constraint::Percentage(47), // Right: Picture Preview & Metadata & Summary
+            Constraint::Percentage(45), // Right: Picture Preview & Metadata & Summary
         ])
         .split(area);
 
@@ -244,7 +255,9 @@ fn render_video_list(
     for (i, it) in items.iter().enumerate().take(end_i).skip(start_i) {
         let is_sel = i == selected_idx;
 
-        let dur = if !it.duration.is_empty() {
+        let dur = if it.is_playlist {
+            "PLAYLIST".to_string()
+        } else if !it.duration.is_empty() {
             it.duration.clone()
         } else {
             "LIVE".to_string()
@@ -253,8 +266,8 @@ fn render_video_list(
         let cursor_marker = if is_sel { "› " } else { "  " };
 
         let total_w = area.width as usize;
-        let left_w = 11; // marker (2) + dur (7) + spaces (2)
-        let channel_max_w = 18.min(total_w.saturating_sub(25));
+        let left_w = 13; // marker (2) + dur (9) + spaces (2)
+        let channel_max_w = 16.min(total_w.saturating_sub(25));
         let title_avail_w = total_w.saturating_sub(left_w + channel_max_w + 2);
 
         let title_clean: String = if it.title.chars().count() > title_avail_w {
@@ -269,25 +282,27 @@ fn render_video_list(
             it.channel.clone()
         };
 
+        let dur_color = if it.is_playlist { p.primary } else { p.tertiary };
+
         let row = if is_sel {
             Line::from(vec![
                 Span::styled(format!(" {}", cursor_marker), Style::default().fg(p.primary).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("{:<7} ", dur), Style::default().fg(p.tertiary).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{:<9} ", dur), Style::default().fg(dur_color).add_modifier(Modifier::BOLD)),
                 Span::styled(
                     format!("{:<width$} ", title_clean, width = title_avail_w),
                     Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!("@{}", channel_clean), Style::default().fg(p.primary)),
+                Span::styled(format!("@{}", channel_clean), Style::default().fg(p.secondary)),
             ])
         } else {
             Line::from(vec![
                 Span::styled(format!(" {}", cursor_marker), Style::default().fg(p.muted)),
-                Span::styled(format!("{:<7} ", dur), Style::default().fg(p.muted)),
+                Span::styled(format!("{:<9} ", dur), Style::default().fg(if it.is_playlist { p.primary } else { p.muted })),
                 Span::styled(
                     format!("{:<width$} ", title_clean, width = title_avail_w),
                     Style::default().fg(p.on_surface),
                 ),
-                Span::styled(format!("@{}", channel_clean), Style::default().fg(Color::Rgb(70, 74, 80))),
+                Span::styled(format!("@{}", channel_clean), Style::default().fg(p.muted)),
             ])
         };
 
@@ -356,11 +371,9 @@ fn render_details_pane(
         Span::styled(bm_label, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
     ]));
 
-    let av_icon = if item.channel_avatar.is_some() { "◈ " } else { "● " };
     meta_lines.push(Line::from(vec![
-        Span::styled(av_icon, Style::default().fg(p.tertiary)),
         Span::styled(format!("@{}", item.channel), Style::default().fg(p.primary).add_modifier(Modifier::BOLD)),
-        Span::styled("  ·  [u] channel videos", Style::default().fg(p.muted)),
+        Span::styled("  ·  [u] channel", Style::default().fg(p.muted)),
     ]));
 
     let mut stats_spans = Vec::new();
@@ -382,6 +395,16 @@ fn render_details_pane(
     ));
 
     meta_lines.push(Line::from(stats_spans));
+
+    // Hotkey actions row for current item
+    let play_label = if item.is_playlist { "enter play all" } else { "enter play" };
+    meta_lines.push(Line::from(vec![
+        Span::styled(" [a] ", Style::default().fg(p.primary).add_modifier(Modifier::BOLD)),
+        Span::styled("audio-only  · ", Style::default().fg(p.muted)),
+        Span::styled(format!(" [{}] ", play_label), Style::default().fg(p.tertiary).add_modifier(Modifier::BOLD)),
+        Span::styled(" · [d] ", Style::default().fg(p.muted)),
+        Span::styled("download", Style::default().fg(p.primary).add_modifier(Modifier::BOLD)),
+    ]));
 
     f.render_widget(Paragraph::new(meta_lines), meta_box);
 
@@ -507,6 +530,73 @@ fn render_settings_modal(f: &mut Frame, selected: usize, cfg: &AppConfig, p: &Sy
     f.render_widget(p_widget, modal_rect);
 }
 
+fn render_download_modal(
+    f: &mut Frame,
+    selected: usize,
+    cur_item: Option<&VideoItem>,
+    cfg: &AppConfig,
+    p: &SystemPalette,
+) {
+    let area = f.area();
+    let modal_w = 64.min(area.width.saturating_sub(4));
+    let modal_h = 12.min(area.height.saturating_sub(2));
+
+    let modal_rect = Rect {
+        x: (area.width.saturating_sub(modal_w)) / 2,
+        y: (area.height.saturating_sub(modal_h)) / 2,
+        width: modal_w,
+        height: modal_h,
+    };
+
+    f.render_widget(Clear, modal_rect);
+
+    let title = if let Some(it) = cur_item {
+        let t: String = it.title.chars().take(35).collect();
+        format!(" download: {}… ", t)
+    } else {
+        " download (yt-dlp) ".to_string()
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(title)
+        .border_style(Style::default().fg(p.primary));
+
+    let options = [
+        "1. Video (MP4 / Best 1080p)",
+        "2. Audio Only (MP3 / Best 320k)",
+        &format!("3. Video + Yandex VOT ({})", cfg.translation_to.to_uppercase()),
+    ];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(""));
+
+    for (i, opt) in options.iter().enumerate() {
+        let is_sel = i == selected;
+        let marker = if is_sel { " › " } else { "   " };
+        let style = if is_sel {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(p.on_surface)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(p.primary).add_modifier(Modifier::BOLD)),
+            Span::styled(*opt, style),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "   1/2/3 or enter to download  ·  esc/d cancel",
+        Style::default().fg(p.muted),
+    )));
+
+    let p_widget = Paragraph::new(lines).block(block);
+    f.render_widget(p_widget, modal_rect);
+}
+
 fn lang_display(code: &str) -> String {
     let name = match code {
         "auto" => "Auto Detect",
@@ -620,13 +710,17 @@ fn render_bottom_bar(
     let dot = Span::styled(" · ", Style::default().fg(Color::Rgb(45, 48, 52)));
 
     let spans = if is_empty {
-        vec![
+        let mut v = vec![
             Span::styled("  / ", key_s),
             Span::styled("search", desc_s),
             dot.clone(),
-            Span::styled("t ", vot_key_s),
-            Span::styled("реки", desc_s),
-            dot.clone(),
+        ];
+        if _cfg.enable_trending {
+            v.push(Span::styled("t ", vot_key_s));
+            v.push(Span::styled("реки", desc_s));
+            v.push(dot.clone());
+        }
+        v.extend(vec![
             Span::styled("h ", key_s),
             Span::styled("history", desc_s),
             dot.clone(),
@@ -635,18 +729,23 @@ fn render_bottom_bar(
             dot.clone(),
             Span::styled("q ", key_s),
             Span::styled("quit", desc_s),
-        ]
+        ]);
+        v
     } else {
-        vec![
+        let mut v = vec![
             Span::styled("  v ", vot_key_s),
             Span::styled("watch (vot)", desc_s),
             dot.clone(),
             Span::styled("enter ", key_s),
-            Span::styled("original", desc_s),
+            Span::styled("play", desc_s),
             dot.clone(),
-            Span::styled("t ", vot_key_s),
-            Span::styled("реки", desc_s),
-            dot.clone(),
+        ];
+        if _cfg.enable_trending {
+            v.push(Span::styled("t ", vot_key_s));
+            v.push(Span::styled("реки", desc_s));
+            v.push(dot.clone());
+        }
+        v.extend(vec![
             Span::styled("r ", key_s),
             Span::styled("related", desc_s),
             dot.clone(),
@@ -659,12 +758,16 @@ fn render_bottom_bar(
             Span::styled("b ", key_s),
             Span::styled("bookmark", desc_s),
             dot.clone(),
+            Span::styled("d ", vot_key_s),
+            Span::styled("download", desc_s),
+            dot.clone(),
             Span::styled("s ", vot_key_s),
             Span::styled("settings", desc_s),
             dot.clone(),
             Span::styled("q ", key_s),
             Span::styled("quit", desc_s),
-        ]
+        ]);
+        v
     };
 
     let p_widget = Paragraph::new(Line::from(spans));

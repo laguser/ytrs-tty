@@ -92,7 +92,7 @@ impl Default for AppConfig {
             sponsorblock: true,
             graphics_mode: "auto".to_string(),
             enable_history: true,
-            enable_trending: true,
+            enable_trending: false,
             enable_related: true,
             enable_summary: true,
         }

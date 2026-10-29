@@ -51,6 +51,7 @@ struct App {
     progress_time: Instant,
     show_settings: bool,
     settings_idx: usize,
+    show_download: Option<usize>, // None or Some(selected_option_idx)
     cfg: AppConfig,
     storage: AppStorage,
     summary_map: std::collections::HashMap<String, Vec<String>>,
@@ -93,6 +94,7 @@ impl App {
             progress_time: Instant::now(),
             show_settings: false,
             settings_idx: 0,
+            show_download: None,
             cfg,
             storage,
             summary_map: std::collections::HashMap::new(),
@@ -102,9 +104,10 @@ impl App {
 
         if has_query {
             app.trigger_search();
-        } else {
-            // Automatically populate with trending / recommendations (реки) on launch
+        } else if app.cfg.enable_trending {
             app.show_trending();
+        } else {
+            app.is_typing_search = true;
         }
 
         app
@@ -156,6 +159,7 @@ impl App {
                 duration: h.duration.clone(),
                 views: "History".to_string(),
                 published: "Recent".to_string(),
+                is_playlist: false,
             })
             .collect();
         self.selected_idx = 0;
@@ -184,6 +188,7 @@ impl App {
                 duration: b.duration.clone(),
                 views: "Bookmark".to_string(),
                 published: "Saved".to_string(),
+                is_playlist: false,
             })
             .collect();
         self.selected_idx = 0;
@@ -413,6 +418,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 app.progress.clone(),
                 app.show_settings,
                 app.settings_idx,
+                app.show_download,
                 summary_text,
                 is_bm,
                 has_thumbnail,
@@ -605,6 +611,43 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
         return false;
     }
 
+    if let Some(dl_idx) = app.show_download {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('d') | KeyCode::Char('в') | KeyCode::Char('В') => {
+                app.show_download = None;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if dl_idx > 0 {
+                    app.show_download = Some(dl_idx - 1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if dl_idx < 2 {
+                    app.show_download = Some(dl_idx + 1);
+                }
+            }
+            KeyCode::Char('1') => {
+                app.show_download = None;
+                trigger_download(app, 0);
+            }
+            KeyCode::Char('2') => {
+                app.show_download = None;
+                trigger_download(app, 1);
+            }
+            KeyCode::Char('3') => {
+                app.show_download = None;
+                trigger_download(app, 2);
+            }
+            KeyCode::Enter => {
+                let choice = dl_idx;
+                app.show_download = None;
+                trigger_download(app, choice);
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     if app.is_typing_search {
         match key.code {
             KeyCode::Enter => {
@@ -629,11 +672,16 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
     }
 
     match key.code {
-        // Esc: if in History/Bookmarks/Channel, return to search/trending
+        // Esc: if in History/Bookmarks/Channel, return to search
         KeyCode::Esc => {
             if !app.query_input.is_empty() {
                 app.query_input.clear();
-                app.show_trending();
+                if app.cfg.enable_trending {
+                    app.show_trending();
+                } else {
+                    app.items.clear();
+                    app.is_typing_search = true;
+                }
             } else {
                 return true;
             }
@@ -686,9 +734,14 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
             if let Some(item) = app.items.get(app.selected_idx) {
                 let id = item.id.clone();
                 let title = item.title.clone();
+                let is_pl = item.is_playlist;
                 app.record_history();
-                Player::play_video(&id, &app.cfg);
-                app.set_status(&format!("Playing: {}", title));
+                Player::play_video(&id, is_pl, &app.cfg);
+                if is_pl {
+                    app.set_status(&format!("Playing playlist: {}", title));
+                } else {
+                    app.set_status(&format!("Playing: {}", title));
+                }
             }
         }
         KeyCode::Char('v') | KeyCode::Char('м') | KeyCode::Char('М') => {
@@ -716,14 +769,41 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
             if let Some(item) = app.items.get(app.selected_idx) {
                 let id = item.id.clone();
                 let title = item.title.clone();
+                let is_pl = item.is_playlist;
                 app.record_history();
-                Player::play_audio_only(&id);
-                app.set_status(&format!("Audio stream started: {}", title));
+                Player::play_audio_only(&id, is_pl);
+                if is_pl {
+                    app.set_status(&format!("Audio playlist stream started: {}", title));
+                } else {
+                    app.set_status(&format!("Audio stream started: {}", title));
+                }
+            }
+        }
+        KeyCode::Char('d') | KeyCode::Char('в') | KeyCode::Char('В') => {
+            if !app.items.is_empty() {
+                app.show_download = Some(0);
+            }
+        }
+        // Playlist view - open playlist contents
+        KeyCode::Char('p') | KeyCode::Char('з') | KeyCode::Char('З') => {
+            if let Some(item) = app.items.get(app.selected_idx) {
+                if item.is_playlist || item.id.starts_with("PL") || item.id.starts_with("OLAK5uy") {
+                    let pl_id = item.id.clone();
+                    app.is_searching = true;
+                    app.set_status(&format!("Loading playlist: {}", item.title));
+                    app.progress = Some((0.3, "Loading playlist tracks...".to_string()));
+                    app.progress_time = Instant::now();
+                    let tx = app.tx.clone();
+                    thread::spawn(move || {
+                        let res = SearchEngine::fetch_playlist_videos(&pl_id, 50);
+                        let _ = tx.send(AppEvent::SearchResults(res));
+                    });
+                }
             }
         }
         KeyCode::Char('y') | KeyCode::Char('н') | KeyCode::Char('Н') => {
             if let Some(item) = app.items.get(app.selected_idx) {
-                if Player::copy_url(&item.id) {
+                if Player::copy_url(&item.id, item.is_playlist) {
                     app.set_status("URL copied to clipboard!");
                 }
             }
@@ -735,4 +815,122 @@ fn handle_input(app: &mut App, key: KeyEvent) -> bool {
     }
 
     false
+}
+
+fn trigger_download(app: &mut App, choice: usize) {
+    let item = match app.items.get(app.selected_idx) {
+        Some(it) => it.clone(),
+        None => return,
+    };
+
+    let vid = item.id.clone();
+    let title = item.title.clone();
+    let is_pl = item.is_playlist;
+    let url = if is_pl || vid.starts_with("PL") || vid.starts_with("OLAK5uy") {
+        format!("https://www.youtube.com/playlist?list={}", vid)
+    } else {
+        format!("https://www.youtube.com/watch?v={}", vid)
+    };
+
+    let tx = app.tx.clone();
+    let to_lang = app.cfg.translation_to.clone();
+    let from_lang = app.cfg.translation_from.clone();
+
+    let dl_dir = dirs::download_dir().unwrap_or_else(|| {
+        let mut p = dirs::home_dir().unwrap_or_default();
+        p.push("Downloads");
+        p
+    });
+
+    match choice {
+        0 => {
+            // Video (MP4 / 1080p)
+            app.set_status(&format!("Downloading Video: {}", title));
+            app.progress = Some((0.1, "Starting video download...".to_string()));
+            app.progress_time = Instant::now();
+
+            thread::spawn(move || {
+                let out_template = dl_dir.join("%(title)s.%(ext)s");
+                let status = std::process::Command::new("yt-dlp")
+                    .arg("-f")
+                    .arg("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best")
+                    .arg("--merge-output-format")
+                    .arg("mp4")
+                    .arg("-o")
+                    .arg(&out_template)
+                    .arg(&url)
+                    .status();
+
+                if let Ok(s) = status {
+                    if s.success() {
+                        let _ = tx.send(AppEvent::ProgressUpdate(1.0, "Video downloaded to ~/Downloads!".to_string()));
+                        return;
+                    }
+                }
+                let _ = tx.send(AppEvent::ProgressUpdate(1.0, "Download finished or interrupted.".to_string()));
+            });
+        }
+        1 => {
+            // Audio Only (MP3)
+            app.set_status(&format!("Downloading MP3: {}", title));
+            app.progress = Some((0.1, "Extracting audio...".to_string()));
+            app.progress_time = Instant::now();
+
+            thread::spawn(move || {
+                let out_template = dl_dir.join("%(title)s.%(ext)s");
+                let status = std::process::Command::new("yt-dlp")
+                    .arg("-x")
+                    .arg("--audio-format")
+                    .arg("mp3")
+                    .arg("--audio-quality")
+                    .arg("0")
+                    .arg("-o")
+                    .arg(&out_template)
+                    .arg(&url)
+                    .status();
+
+                if let Ok(s) = status {
+                    if s.success() {
+                        let _ = tx.send(AppEvent::ProgressUpdate(1.0, "MP3 saved to ~/Downloads!".to_string()));
+                        return;
+                    }
+                }
+                let _ = tx.send(AppEvent::ProgressUpdate(1.0, "Audio download completed.".to_string()));
+            });
+        }
+        2 => {
+            // Video + VOT
+            app.set_status(&format!("Fetching VOT & downloading: {}", title));
+            app.progress = Some((0.15, "Connecting to VOT service...".to_string()));
+            app.progress_time = Instant::now();
+
+            thread::spawn(move || {
+                let audio_opt = vot::VotManager::fetch_audio_url(&url, &from_lang, &to_lang);
+                if let Some(_audio_url) = audio_opt {
+                    let _ = tx.send(AppEvent::ProgressUpdate(0.4, "Downloading video + voiceover...".to_string()));
+                    let out_template = dl_dir.join("%(title)s [VOT].%(ext)s");
+                    let status = std::process::Command::new("yt-dlp")
+                        .arg("-f")
+                        .arg("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best")
+                        .arg("--merge-output-format")
+                        .arg("mp4")
+                        .arg("-o")
+                        .arg(&out_template)
+                        .arg(&url)
+                        .status();
+
+                    if let Ok(s) = status {
+                        if s.success() {
+                            let _ = tx.send(AppEvent::ProgressUpdate(1.0, "Video + VOT downloaded to ~/Downloads!".to_string()));
+                            return;
+                        }
+                    }
+                    let _ = tx.send(AppEvent::ProgressUpdate(1.0, "Download finished.".to_string()));
+                } else {
+                    let _ = tx.send(AppEvent::ProgressUpdate(1.0, "VOT audio translation unavailable.".to_string()));
+                }
+            });
+        }
+        _ => {}
+    }
 }

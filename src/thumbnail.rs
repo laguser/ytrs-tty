@@ -124,19 +124,25 @@ pub fn download_thumbnail(video_id: &str) -> Option<PathBuf> {
         return Some(path);
     }
 
-    let url = format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id);
+    let urls = [
+        format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id),
+        format!("https://i.ytimg.com/vi/{}/mqdefault.jpg", video_id),
+    ];
     let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(4))
+        .timeout(std::time::Duration::from_secs(2))
         .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0")
         .build();
 
-    let resp = agent.get(&url).call().ok()?;
-    let mut bytes = Vec::new();
-    let mut reader = resp.into_reader();
-    let _ = std::io::copy(&mut reader, &mut bytes);
-
-    if !bytes.is_empty() && fs::write(&path, &bytes).is_ok() {
-        return Some(path);
+    for url in urls {
+        if let Ok(resp) = agent.get(&url).call() {
+            let mut bytes = Vec::new();
+            let mut reader = resp.into_reader();
+            if std::io::copy(&mut reader, &mut bytes).is_ok() && !bytes.is_empty() {
+                if fs::write(&path, &bytes).is_ok() {
+                    return Some(path);
+                }
+            }
+        }
     }
 
     None
@@ -161,6 +167,7 @@ pub fn render_thumbnail(video_id: &str, w: u16, h: u16, mode: &str) -> Option<Th
         .arg(proto)
         .arg("-c")
         .arg("full")
+        .arg("--speed=9")
         .arg("-s")
         .arg(&size_arg)
         .arg(&img_path)

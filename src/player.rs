@@ -7,17 +7,26 @@ use std::thread;
 pub struct Player;
 
 impl Player {
-    /// Play standard video with ultra-fast mpv config
-    pub fn play_video(video_id: &str, cfg: &AppConfig) {
-        let url = format!("https://www.youtube.com/watch?v={}", video_id);
+    /// Play standard video with ultra-fast mpv config (supports playlists and single videos)
+    pub fn play_video(id_or_playlist: &str, is_playlist: bool, cfg: &AppConfig) {
+        let url = if is_playlist || id_or_playlist.starts_with("PL") || id_or_playlist.starts_with("OLAK5uy") {
+            format!("https://www.youtube.com/playlist?list={}", id_or_playlist)
+        } else {
+            format!("https://www.youtube.com/watch?v={}", id_or_playlist)
+        };
         let format_arg = format!(
             "--ytdl-format=bestvideo[height<={}]+bestaudio/best[height<={}]/best",
             cfg.max_res_height, cfg.max_res_height
         );
+        let title_arg = if is_playlist {
+            "--title=yt [playlist]: ${media-title}".to_string()
+        } else {
+            "--title=yt: ${media-title}".to_string()
+        };
         Self::spawn_mpv(
             &[
                 &format_arg,
-                "--title=yt: ${media-title}",
+                &title_arg,
                 &url,
             ],
             None,
@@ -96,14 +105,18 @@ impl Player {
                 on_progress(1.0, "Playing with Voice Translation!");
             } else {
                 on_progress(1.0, "VOT translation unavailable, opening standard stream");
-                Self::play_video(&vid, &cfg);
+                Self::play_video(&vid, false, &cfg);
             }
         });
     }
 
-    /// Play audio-only stream
-    pub fn play_audio_only(video_id: &str) {
-        let url = format!("https://www.youtube.com/watch?v={}", video_id);
+    /// Play audio-only stream (supports playlists and single videos)
+    pub fn play_audio_only(id_or_playlist: &str, is_playlist: bool) {
+        let url = if is_playlist || id_or_playlist.starts_with("PL") || id_or_playlist.starts_with("OLAK5uy") {
+            format!("https://www.youtube.com/playlist?list={}", id_or_playlist)
+        } else {
+            format!("https://www.youtube.com/watch?v={}", id_or_playlist)
+        };
         let _ = Command::new("mpv")
             .arg("--no-video")
             .arg("--ytdl-format=bestaudio/best")
@@ -167,8 +180,12 @@ impl Player {
     }
 
     /// Copy URL to clipboard
-    pub fn copy_url(video_id: &str) -> bool {
-        let url = format!("https://www.youtube.com/watch?v={}", video_id);
+    pub fn copy_url(id_or_playlist: &str, is_playlist: bool) -> bool {
+        let url = if is_playlist || id_or_playlist.starts_with("PL") || id_or_playlist.starts_with("OLAK5uy") {
+            format!("https://www.youtube.com/playlist?list={}", id_or_playlist)
+        } else {
+            format!("https://www.youtube.com/watch?v={}", id_or_playlist)
+        };
         if let Ok(mut child) = Command::new("wl-copy")
             .stdin(Stdio::piped())
             .spawn()
